@@ -9,7 +9,8 @@ const Wrapper = styled.div`
   height: 100%;
   padding: 16px;
   gap: 14px;
-  background: ${props => props.theme.surface};
+  background: var(--module-bg, ${props => props.theme.surface});
+  color: var(--module-text, ${props => props.theme.text});
 `;
 
 const Header = styled.div`

@@ -5,7 +5,7 @@ import { Track } from '../services/AudioService';
 import { Play, Pause, Trash2, GripVertical } from 'lucide-react';
 
 const PlaylistContainer = styled.div`
-  background-color: ${props => props.theme.surface};
+  background-color: var(--module-bg, ${props => props.theme.surface});
   display: flex;
   flex-direction: column;
   height: 100%;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import styled, { createGlobalStyle, ThemeProvider } from 'styled-components';
 import { Responsive, type Layout, type ResponsiveLayouts, type LayoutItem } from 'react-grid-layout';
 import { WidthProvider } from 'react-grid-layout/legacy';
@@ -16,9 +16,14 @@ import LibraryStats from './modules/LibraryStats';
 import WindowTitleBar from './components/WindowTitleBar';
 import ModuleContainer from './components/ModuleContainer';
 import { lightTheme } from './styles/theme';
-import { Layout as LayoutIcon, Unlock, Settings } from 'lucide-react';
+import { Layout as LayoutIcon, Unlock, Settings, X } from 'lucide-react';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
+type ResizeHandleAxis = 's' | 'e' | 'n' | 'w' | 'se' | 'sw' | 'ne' | 'nw';
+type ResponsiveWithHandlesProps = React.ComponentProps<typeof ResponsiveGridLayout> & {
+  resizeHandles?: ResizeHandleAxis[];
+};
+const ResponsiveGridLayoutWithHandles = ResponsiveGridLayout as React.ComponentType<ResponsiveWithHandlesProps>;
 
 type Breakpoint = 'lg' | 'md' | 'sm' | 'xs' | 'xxs';
 
@@ -26,6 +31,20 @@ interface ModuleConfig {
   id: string;
   title: string;
   isVisible: boolean;
+}
+
+interface ModuleStyleConfig {
+  background?: string;
+  textColor?: string;
+  borderRadius?: number;
+  opacity?: number;
+  fontSize?: number;
+  fontFamily?: string;
+}
+
+interface ModuleSizeConfig {
+  w?: number;
+  h?: number;
 }
 
 const breakpoints: Record<Breakpoint, number> = {
@@ -161,6 +180,87 @@ const normalizeLayouts = (
   return normalized;
 };
 
+const applySizeConfigsToLayouts = (
+  inputLayouts: ResponsiveLayouts<string>,
+  sizeConfigs: Record<string, ModuleSizeConfig>
+): ResponsiveLayouts<string> => {
+  const output: ResponsiveLayouts<string> = {};
+  (Object.keys(breakpoints) as Breakpoint[]).forEach(bp => {
+    const scale = cols[bp] / cols.lg;
+    const base = inputLayouts[bp] ?? [];
+    output[bp] = base.map(item => {
+      const config = sizeConfigs[item.i];
+      if (!config) return item;
+      let w = item.w;
+      let h = item.h;
+      if (config.w !== undefined) {
+        const scaled = Math.round(config.w * scale);
+        const minW = item.minW ?? 1;
+        w = Math.min(cols[bp], Math.max(minW, scaled));
+      }
+      if (config.h !== undefined) {
+        const scaled = Math.round(config.h * scale);
+        const minH = item.minH ?? 1;
+        h = Math.max(minH, scaled);
+      }
+      let x = item.x;
+      if (x + w > cols[bp]) {
+        x = Math.max(0, cols[bp] - w);
+      }
+      return { ...item, w, h, x };
+    });
+  });
+  return output;
+};
+
+const resolveCollisions = (
+  inputLayouts: ResponsiveLayouts<string>
+): ResponsiveLayouts<string> => {
+  const output: ResponsiveLayouts<string> = {};
+  const collides = (a: LayoutItem, b: LayoutItem) => {
+    const ax2 = a.x + a.w;
+    const ay2 = a.y + a.h;
+    const bx2 = b.x + b.w;
+    const by2 = b.y + b.h;
+    const xOverlap = a.x < bx2 && ax2 > b.x;
+    const yOverlap = a.y < by2 && ay2 > b.y;
+    return xOverlap && yOverlap;
+  };
+  (Object.keys(breakpoints) as Breakpoint[]).forEach(bp => {
+    const base = [...(inputLayouts[bp] ?? [])];
+    const placed: LayoutItem[] = [];
+    base
+      .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+      .forEach(item => {
+        let next = { ...item };
+        while (placed.some(p => collides(next, p))) {
+          const blockers = placed.filter(p => next.x < p.x + p.w && next.x + next.w > p.x);
+          const pushY = Math.max(next.y, ...blockers.map(b => b.y + b.h));
+          next = { ...next, y: pushY };
+        }
+        placed.push(next);
+      });
+    output[bp] = placed;
+  });
+  return output;
+};
+
+const deriveSizeConfigsFromLayouts = (
+  inputLayouts: ResponsiveLayouts<string>,
+  activeBreakpoint: Breakpoint
+): Record<string, ModuleSizeConfig> => {
+  const scale = cols[activeBreakpoint] / cols.lg;
+  if (!scale) return {};
+  const base = inputLayouts[activeBreakpoint] ?? [];
+  return base.reduce<Record<string, ModuleSizeConfig>>((acc, item) => {
+    acc[item.i] = {
+      w: Math.max(1, Math.round(item.w / scale)),
+      h: Math.max(1, Math.round(item.h / scale))
+    };
+    return acc;
+  }, {});
+};
+
 const GlobalStyle = createGlobalStyle`
   body {
     margin: 0;
@@ -191,6 +291,86 @@ const GlobalStyle = createGlobalStyle`
     background: ${props => props.theme.accent} !important;
     border-radius: 12px !important;
     opacity: 0.1 !important;
+  }
+
+  .layout .react-resizable-handle {
+    display: none;
+  }
+  .layout.is-editing .react-resizable-handle {
+    display: block;
+  }
+
+  .react-resizable-handle {
+    position: absolute;
+    background: ${props => props.theme.accent};
+    opacity: 0.4;
+  }
+
+  .react-resizable-handle-n,
+  .react-resizable-handle-s {
+    height: 6px;
+    left: 10px;
+    right: 10px;
+  }
+
+  .react-resizable-handle-n {
+    top: -3px;
+    cursor: ns-resize;
+  }
+
+  .react-resizable-handle-s {
+    bottom: -3px;
+    cursor: ns-resize;
+  }
+
+  .react-resizable-handle-e,
+  .react-resizable-handle-w {
+    width: 6px;
+    top: 10px;
+    bottom: 10px;
+  }
+
+  .react-resizable-handle-e {
+    right: -3px;
+    cursor: ew-resize;
+  }
+
+  .react-resizable-handle-w {
+    left: -3px;
+    cursor: ew-resize;
+  }
+
+  .react-resizable-handle-se,
+  .react-resizable-handle-sw,
+  .react-resizable-handle-ne,
+  .react-resizable-handle-nw {
+    width: 10px;
+    height: 10px;
+    border-radius: 6px;
+  }
+
+  .react-resizable-handle-se {
+    right: -4px;
+    bottom: -4px;
+    cursor: se-resize;
+  }
+
+  .react-resizable-handle-sw {
+    left: -4px;
+    bottom: -4px;
+    cursor: sw-resize;
+  }
+
+  .react-resizable-handle-ne {
+    right: -4px;
+    top: -4px;
+    cursor: ne-resize;
+  }
+
+  .react-resizable-handle-nw {
+    left: -4px;
+    top: -4px;
+    cursor: nw-resize;
   }
 `;
 
@@ -238,17 +418,21 @@ const ToolButton = styled.button<{ active?: boolean }>`
   }
 `;
 
-const ModuleManagerPanel = styled.div`
+const ModuleManagerPanel = styled.div<{ x: number; y: number; isDragging: boolean }>`
   position: fixed;
-  top: 80px;
-  right: 20px;
+  top: ${props => props.y}px;
+  left: ${props => props.x}px;
   width: 320px;
   background: ${props => props.theme.surface};
   border: 1px solid ${props => props.theme.border};
   border-radius: 16px;
   box-shadow: ${props => props.theme.shadow};
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 140px);
   overflow: hidden;
   z-index: 1000;
+  user-select: ${props => props.isDragging ? 'none' : 'auto'};
 `;
 
 const ModuleManagerHeader = styled.div`
@@ -257,6 +441,7 @@ const ModuleManagerHeader = styled.div`
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid ${props => props.theme.border};
+  cursor: move;
 `;
 
 const ModuleManagerTitle = styled.div`
@@ -265,11 +450,34 @@ const ModuleManagerTitle = styled.div`
   color: ${props => props.theme.text};
 `;
 
+const ModuleManagerHeaderActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: ${props => props.theme.textSecondary};
+`;
+
+const ModuleManagerHeaderButton = styled.button`
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover {
+    color: ${props => props.theme.text};
+  }
+`;
+
 const ModuleManagerBody = styled.div`
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: auto;
 `;
 
 const ModuleRow = styled.div`
@@ -293,6 +501,56 @@ const ModuleTitleInput = styled.input`
   padding: 6px 10px;
   color: ${props => props.theme.text};
   font-size: 0.85rem;
+  outline: none;
+
+  &:focus {
+    border-color: ${props => props.theme.accent};
+    background: ${props => props.theme.surface};
+  }
+`;
+
+const ModuleEditor = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0 4px 26px;
+`;
+
+const ModuleSection = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+`;
+
+const ModuleSectionTitle = styled.div`
+  font-size: 0.7rem;
+  color: ${props => props.theme.textSecondary};
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+`;
+
+const ModuleFieldRow = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+`;
+
+const ModuleField = styled.label`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: ${props => props.theme.textSecondary};
+`;
+
+const ModuleFieldInput = styled.input`
+  background: ${props => props.theme.surfaceHover};
+  border: 1px solid ${props => props.theme.border};
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: ${props => props.theme.text};
+  font-size: 0.75rem;
   outline: none;
 
   &:focus {
@@ -351,22 +609,51 @@ const App: React.FC = () => {
   const [isModuleManagerOpen, setIsModuleManagerOpen] = useState(false);
   const [moduleConfigs, setModuleConfigs] = useState<ModuleConfig[]>(() => mergeModuleConfigs(null));
   const [layouts, setLayouts] = useState<ResponsiveLayouts<string>>(defaultLayouts);
+  const [moduleStyleConfigs, setModuleStyleConfigs] = useState<Record<string, ModuleStyleConfig>>({});
+  const [moduleSizeConfigs, setModuleSizeConfigs] = useState<Record<string, ModuleSizeConfig>>({});
+  const [activeBreakpoint, setActiveBreakpoint] = useState<Breakpoint>('lg');
+  const [moduleManagerPosition, setModuleManagerPosition] = useState(() => {
+    const saved = localStorage.getItem('player-module-manager-position');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+          return { x: parsed.x, y: parsed.y };
+        }
+      } catch (error) {
+        return { x: 20, y: 80 };
+      }
+    }
+    const fallbackX = typeof window === 'undefined' ? 20 : Math.max(20, window.innerWidth - 360);
+    return { x: fallbackX, y: 80 };
+  });
+  const [isDraggingManager, setIsDraggingManager] = useState(false);
   const [favoriteTrackIds, setFavoriteTrackIds] = useState<string[]>([]);
   const [recentTrackIds, setRecentTrackIds] = useState<string[]>([]);
+  const moduleManagerRef = useRef<HTMLDivElement | null>(null);
+  const moduleManagerDragRef = useRef({ offsetX: 0, offsetY: 0, dragging: false });
 
   useEffect(() => {
     const savedConfigs = localStorage.getItem('player-modules');
     const savedLayouts = localStorage.getItem('player-layouts');
     const savedFavorites = localStorage.getItem('player-favorites');
     const savedRecents = localStorage.getItem('player-recents');
+    const savedStyles = localStorage.getItem('player-module-styles');
+    const savedSizes = localStorage.getItem('player-module-sizes');
     const parsedConfigs = savedConfigs ? (JSON.parse(savedConfigs) as ModuleConfig[]) : null;
     const nextConfigs = mergeModuleConfigs(parsedConfigs);
     const parsedLayouts = savedLayouts ? (JSON.parse(savedLayouts) as ResponsiveLayouts<string>) : defaultLayouts;
     const normalized = normalizeLayouts(parsedLayouts, nextConfigs);
+    const parsedStyles = savedStyles ? JSON.parse(savedStyles) : {};
+    const parsedSizes = savedSizes ? JSON.parse(savedSizes) : {};
+    const sizedLayouts = applySizeConfigsToLayouts(normalized, parsedSizes ?? {});
+    const deconflicted = resolveCollisions(sizedLayouts);
     const parsedFavorites = savedFavorites ? JSON.parse(savedFavorites) : [];
     const parsedRecents = savedRecents ? JSON.parse(savedRecents) : [];
     setModuleConfigs(nextConfigs);
-    setLayouts(normalized);
+    setLayouts(deconflicted);
+    setModuleStyleConfigs(parsedStyles ?? {});
+    setModuleSizeConfigs(parsedSizes ?? {});
     setFavoriteTrackIds(Array.isArray(parsedFavorites) ? parsedFavorites : []);
     setRecentTrackIds(Array.isArray(parsedRecents) ? parsedRecents : []);
   }, []);
@@ -374,6 +661,18 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('player-modules', JSON.stringify(moduleConfigs));
   }, [moduleConfigs]);
+
+  useEffect(() => {
+    localStorage.setItem('player-module-styles', JSON.stringify(moduleStyleConfigs));
+  }, [moduleStyleConfigs]);
+
+  useEffect(() => {
+    localStorage.setItem('player-module-sizes', JSON.stringify(moduleSizeConfigs));
+  }, [moduleSizeConfigs]);
+
+  useEffect(() => {
+    localStorage.setItem('player-module-manager-position', JSON.stringify(moduleManagerPosition));
+  }, [moduleManagerPosition]);
 
   useEffect(() => {
     localStorage.setItem('player-favorites', JSON.stringify(favoriteTrackIds));
@@ -394,10 +693,105 @@ const App: React.FC = () => {
     }
   }, [isEditing]);
 
+  useEffect(() => {
+    if (!isModuleManagerOpen) {
+      moduleManagerDragRef.current.dragging = false;
+      setIsDraggingManager(false);
+      return;
+    }
+    const clampToViewport = () => {
+      const rect = moduleManagerRef.current?.getBoundingClientRect();
+      const width = rect?.width ?? 320;
+      const height = rect?.height ?? 300;
+      const maxX = Math.max(10, window.innerWidth - width - 10);
+      const maxY = Math.max(10, window.innerHeight - height - 10);
+      setModuleManagerPosition(prev => ({
+        x: Math.max(10, Math.min(prev.x, maxX)),
+        y: Math.max(10, Math.min(prev.y, maxY))
+      }));
+    };
+    requestAnimationFrame(clampToViewport);
+  }, [isModuleManagerOpen]);
+
+  useEffect(() => {
+    if (!isDraggingManager) return;
+    const handleMove = (event: MouseEvent) => {
+      if (!moduleManagerDragRef.current.dragging) return;
+      const rect = moduleManagerRef.current?.getBoundingClientRect();
+      const width = rect?.width ?? 320;
+      const height = rect?.height ?? 300;
+      const nextX = event.clientX - moduleManagerDragRef.current.offsetX;
+      const nextY = event.clientY - moduleManagerDragRef.current.offsetY;
+      const maxX = Math.max(10, window.innerWidth - width - 10);
+      const maxY = Math.max(10, window.innerHeight - height - 10);
+      setModuleManagerPosition({
+        x: Math.max(10, Math.min(nextX, maxX)),
+        y: Math.max(10, Math.min(nextY, maxY))
+      });
+    };
+    const handleUp = () => {
+      moduleManagerDragRef.current.dragging = false;
+      setIsDraggingManager(false);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [isDraggingManager]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const rect = moduleManagerRef.current?.getBoundingClientRect();
+      const width = rect?.width ?? 320;
+      const height = rect?.height ?? 300;
+      const maxX = Math.max(10, window.innerWidth - width - 10);
+      const maxY = Math.max(10, window.innerHeight - height - 10);
+      setModuleManagerPosition(prev => ({
+        x: Math.max(10, Math.min(prev.x, maxX)),
+        y: Math.max(10, Math.min(prev.y, maxY))
+      }));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleStartDragManager = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const rect = moduleManagerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    moduleManagerDragRef.current = {
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      dragging: true
+    };
+    setIsDraggingManager(true);
+  };
+
   const onLayoutChange = (currentLayout: Layout, allLayouts: ResponsiveLayouts<string>) => {
     const normalized = normalizeLayouts(allLayouts, moduleConfigs);
-    setLayouts(normalized);
-    localStorage.setItem('player-layouts', JSON.stringify(normalized));
+    const derivedSizes = isEditing
+      ? deriveSizeConfigsFromLayouts(normalized, activeBreakpoint)
+      : moduleSizeConfigs;
+    if (isEditing) {
+      setModuleSizeConfigs(derivedSizes);
+    }
+    const sizedLayouts = applySizeConfigsToLayouts(normalized, derivedSizes);
+    const deconflicted = resolveCollisions(sizedLayouts);
+    setLayouts(deconflicted);
+    localStorage.setItem('player-layouts', JSON.stringify(deconflicted));
+  };
+
+  const handleBreakpointChange = (bp: Breakpoint) => {
+    setActiveBreakpoint(bp);
+    setLayouts(prev => {
+      const normalized = normalizeLayouts(prev, moduleConfigs);
+      const sizedLayouts = applySizeConfigsToLayouts(normalized, moduleSizeConfigs);
+      const deconflicted = resolveCollisions(sizedLayouts);
+      localStorage.setItem('player-layouts', JSON.stringify(deconflicted));
+      return deconflicted;
+    });
   };
 
   const handleTrackSelect = (track: Track) => {
@@ -483,7 +877,7 @@ const App: React.FC = () => {
       const updated = prev.map(config => 
         config.id === id ? { ...config, isVisible: !config.isVisible } : config
       );
-      setLayouts(prevLayouts => normalizeLayouts(prevLayouts, updated));
+      setLayouts(prevLayouts => applySizeConfigsToLayouts(normalizeLayouts(prevLayouts, updated), moduleSizeConfigs));
       return updated;
     });
   };
@@ -496,16 +890,76 @@ const App: React.FC = () => {
 
   const handleResetLayout = () => {
     const normalized = normalizeLayouts(defaultLayouts, moduleConfigs);
-    setLayouts(normalized);
-    localStorage.setItem('player-layouts', JSON.stringify(normalized));
+    const sizedLayouts = applySizeConfigsToLayouts(normalized, moduleSizeConfigs);
+    const deconflicted = resolveCollisions(sizedLayouts);
+    setLayouts(deconflicted);
+    localStorage.setItem('player-layouts', JSON.stringify(deconflicted));
   };
 
   const handleResetModules = () => {
     const nextConfigs = mergeModuleConfigs(null);
     const normalized = normalizeLayouts(defaultLayouts, nextConfigs);
+    const sizedLayouts = applySizeConfigsToLayouts(normalized, moduleSizeConfigs);
+    const deconflicted = resolveCollisions(sizedLayouts);
     setModuleConfigs(nextConfigs);
-    setLayouts(normalized);
-    localStorage.setItem('player-layouts', JSON.stringify(normalized));
+    setLayouts(deconflicted);
+    localStorage.setItem('player-layouts', JSON.stringify(deconflicted));
+  };
+
+  const updateStyleConfig = (id: string, updates: Partial<ModuleStyleConfig>) => {
+    setModuleStyleConfigs(prev => {
+      const current = prev[id] ?? {};
+      const merged = { ...current, ...updates };
+      const cleaned = (Object.entries(merged) as Array<[keyof ModuleStyleConfig, ModuleStyleConfig[keyof ModuleStyleConfig]]>)
+        .reduce<ModuleStyleConfig>((acc, [key, value]) => {
+        const isEmptyString = typeof value === 'string' && value.trim() === '';
+        const isInvalidNumber = typeof value === 'number' && Number.isNaN(value);
+        if (value === undefined || isEmptyString || isInvalidNumber) {
+          return acc;
+        }
+        acc[key] = value as never;
+        return acc;
+      }, {});
+      const next = { ...prev };
+      if (Object.keys(cleaned).length === 0) {
+        delete next[id];
+      } else {
+        next[id] = cleaned;
+      }
+      return next;
+    });
+  };
+
+  const updateSizeConfig = (id: string, updates: Partial<ModuleSizeConfig>) => {
+    setModuleSizeConfigs(prev => {
+      const current = prev[id] ?? {};
+      const merged = { ...current, ...updates };
+      const cleaned = (Object.entries(merged) as Array<[keyof ModuleSizeConfig, ModuleSizeConfig[keyof ModuleSizeConfig]]>)
+        .reduce<ModuleSizeConfig>((acc, [key, value]) => {
+        const isInvalidNumber = typeof value === 'number' && Number.isNaN(value);
+        if (value === undefined || isInvalidNumber) {
+          return acc;
+        }
+        acc[key] = value as never;
+        return acc;
+      }, {});
+      const next = { ...prev };
+      if (Object.keys(cleaned).length === 0) {
+        delete next[id];
+      } else {
+        next[id] = cleaned;
+      }
+      const sizedLayouts = applySizeConfigsToLayouts(normalizeLayouts(layouts, moduleConfigs), next);
+      setLayouts(sizedLayouts);
+      localStorage.setItem('player-layouts', JSON.stringify(sizedLayouts));
+      return next;
+    });
+  };
+
+  const parseNumberInput = (value: string) => {
+    if (value.trim() === '') return undefined;
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
   };
 
   const moduleConfigMap = new Map(moduleConfigs.map(config => [config.id, config]));
@@ -514,6 +968,13 @@ const App: React.FC = () => {
     .map(id => tracks.find(track => track.id === id))
     .filter((track): track is Track => Boolean(track));
   const isCurrentFavorite = currentTrack ? favoriteTrackIds.includes(currentTrack.id) : false;
+  const activeCollection = collections.find(collection => collection.id === activeCollectionId) ?? null;
+  const activeCollectionTrackIds = new Set(activeCollection?.trackIds ?? []);
+  const libraryTracks = activeCollectionId === 'favorites'
+    ? favoriteTracks
+    : activeCollectionId
+      ? tracks.filter(track => activeCollectionTrackIds.has(track.id))
+      : tracks;
   const moduleDefinitions = [
     {
       id: 'sidebar',
@@ -534,7 +995,7 @@ const App: React.FC = () => {
       title: 'Music Library',
       render: () => (
         <MusicLibrary
-          tracks={tracks}
+          tracks={libraryTracks}
           currentTrack={currentTrack}
           onTrackSelect={handleTrackSelect}
           onAddTracks={handleAddTracks}
@@ -617,14 +1078,16 @@ const App: React.FC = () => {
         <WindowTitleBar />
         
         <MainArea>
-          <ResponsiveGridLayout
-            className="layout"
+          <ResponsiveGridLayoutWithHandles
+            className={`layout ${isEditing ? 'is-editing' : 'is-view'}`}
             layouts={layouts}
             breakpoints={breakpoints}
             cols={cols}
             rowHeight={60}
             dragConfig={{ enabled: isEditing, handle: '.drag-handle' }}
             resizeConfig={{ enabled: isEditing }}
+            resizeHandles={['s', 'e', 'n', 'w', 'se', 'sw', 'ne', 'nw']}
+            onBreakpointChange={(bp) => handleBreakpointChange(bp as Breakpoint)}
             onLayoutChange={onLayoutChange}
             margin={[12, 12]}
           >
@@ -636,13 +1099,14 @@ const App: React.FC = () => {
                     title={config?.title ?? module.title}
                     isEditing={isEditing}
                     onClose={() => handleToggleModule(module.id)}
+                    styleConfig={moduleStyleConfigs[module.id]}
                   >
                     {module.render()}
                   </ModuleContainer>
                 </div>
               );
             })}
-          </ResponsiveGridLayout>
+          </ResponsiveGridLayoutWithHandles>
         </MainArea>
 
         <Toolbar>
@@ -666,27 +1130,144 @@ const App: React.FC = () => {
         </Toolbar>
 
         {isEditing && isModuleManagerOpen && (
-          <ModuleManagerPanel>
-            <ModuleManagerHeader>
+          <ModuleManagerPanel
+            ref={moduleManagerRef}
+            x={moduleManagerPosition.x}
+            y={moduleManagerPosition.y}
+            isDragging={isDraggingManager}
+          >
+            <ModuleManagerHeader onMouseDown={handleStartDragManager}>
               <ModuleManagerTitle>Module Manager</ModuleManagerTitle>
-              <Settings size={16} />
+              <ModuleManagerHeaderActions onMouseDown={(event) => event.stopPropagation()}>
+                <Settings size={16} />
+                <ModuleManagerHeaderButton
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={() => {
+                    moduleManagerDragRef.current.dragging = false;
+                    setIsDraggingManager(false);
+                    setIsModuleManagerOpen(false);
+                  }}
+                >
+                  <X size={16} />
+                </ModuleManagerHeaderButton>
+              </ModuleManagerHeaderActions>
             </ModuleManagerHeader>
             <ModuleManagerBody>
               {moduleDefinitions.map(module => {
                 const config = moduleConfigMap.get(module.id);
                 const isVisible = config?.isVisible ?? true;
+                const styleConfig = moduleStyleConfigs[module.id] ?? {};
+                const sizeConfig = moduleSizeConfigs[module.id] ?? {};
                 return (
-                  <ModuleRow key={module.id}>
-                    <ModuleToggle
-                      type="checkbox"
-                      checked={isVisible}
-                      onChange={() => handleToggleModule(module.id)}
-                    />
-                    <ModuleTitleInput
-                      value={config?.title ?? module.title}
-                      onChange={(e) => handleRenameModule(module.id, e.target.value)}
-                    />
-                  </ModuleRow>
+                  <div key={module.id}>
+                    <ModuleRow>
+                      <ModuleToggle
+                        type="checkbox"
+                        checked={isVisible}
+                        onChange={() => handleToggleModule(module.id)}
+                      />
+                      <ModuleTitleInput
+                        value={config?.title ?? module.title}
+                        onChange={(e) => handleRenameModule(module.id, e.target.value)}
+                      />
+                    </ModuleRow>
+                    <ModuleEditor>
+                      <ModuleSection>
+                        <ModuleSectionTitle>Style</ModuleSectionTitle>
+                        <ModuleFieldRow>
+                          <ModuleField>
+                            Background
+                            <ModuleFieldInput
+                              value={styleConfig.background ?? ''}
+                              onChange={(e) => updateStyleConfig(module.id, { background: e.target.value || undefined })}
+                              placeholder="rgba(0,0,0,0.6)"
+                            />
+                          </ModuleField>
+                          <ModuleField>
+                            Text Color
+                            <ModuleFieldInput
+                              value={styleConfig.textColor ?? ''}
+                              onChange={(e) => updateStyleConfig(module.id, { textColor: e.target.value || undefined })}
+                              placeholder="#ffffff"
+                            />
+                          </ModuleField>
+                        </ModuleFieldRow>
+                        <ModuleFieldRow>
+                          <ModuleField>
+                            Radius
+                            <ModuleFieldInput
+                              type="number"
+                              value={styleConfig.borderRadius ?? ''}
+                              onChange={(e) => updateStyleConfig(module.id, { borderRadius: parseNumberInput(e.target.value) })}
+                              min={0}
+                              step={1}
+                            />
+                          </ModuleField>
+                          <ModuleField>
+                            Opacity
+                            <ModuleFieldInput
+                              type="number"
+                              value={styleConfig.opacity ?? ''}
+                              onChange={(e) => {
+                                const parsed = parseNumberInput(e.target.value);
+                                const clamped = parsed === undefined ? undefined : Math.min(1, Math.max(0, parsed));
+                                updateStyleConfig(module.id, { opacity: clamped });
+                              }}
+                              min={0}
+                              max={1}
+                              step={0.05}
+                            />
+                          </ModuleField>
+                        </ModuleFieldRow>
+                        <ModuleFieldRow>
+                          <ModuleField>
+                            Font Size
+                            <ModuleFieldInput
+                              type="number"
+                              value={styleConfig.fontSize ?? ''}
+                              onChange={(e) => updateStyleConfig(module.id, { fontSize: parseNumberInput(e.target.value) })}
+                              min={10}
+                              step={1}
+                            />
+                          </ModuleField>
+                          <ModuleField>
+                            Font Family
+                            <ModuleFieldInput
+                              value={styleConfig.fontFamily ?? ''}
+                              onChange={(e) => updateStyleConfig(module.id, { fontFamily: e.target.value || undefined })}
+                              placeholder="Segoe UI"
+                            />
+                          </ModuleField>
+                        </ModuleFieldRow>
+                      </ModuleSection>
+                      <ModuleSection>
+                        <ModuleSectionTitle>Size</ModuleSectionTitle>
+                        <ModuleFieldRow>
+                          <ModuleField>
+                            Width
+                            <ModuleFieldInput
+                              type="number"
+                              value={sizeConfig.w ?? ''}
+                              onChange={(e) => updateSizeConfig(module.id, { w: parseNumberInput(e.target.value) })}
+                              min={1}
+                              max={cols.lg}
+                              step={1}
+                            />
+                          </ModuleField>
+                          <ModuleField>
+                            Height
+                            <ModuleFieldInput
+                              type="number"
+                              value={sizeConfig.h ?? ''}
+                              onChange={(e) => updateSizeConfig(module.id, { h: parseNumberInput(e.target.value) })}
+                              min={1}
+                              step={1}
+                            />
+                          </ModuleField>
+                        </ModuleFieldRow>
+                      </ModuleSection>
+                    </ModuleEditor>
+                  </div>
                 );
               })}
             </ModuleManagerBody>

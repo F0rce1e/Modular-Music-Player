@@ -10,8 +10,8 @@ const LibraryContainer = styled.div`
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: ${props => props.theme.surface};
-  color: ${props => props.theme.text};
+  background-color: var(--module-bg, ${props => props.theme.surface});
+  color: var(--module-text, ${props => props.theme.text});
   overflow: hidden;
 `;
 

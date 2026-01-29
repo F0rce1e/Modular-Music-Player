@@ -7,7 +7,8 @@ const Container = styled.div`
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: ${props => props.theme.surface};
+  background: var(--module-bg, ${props => props.theme.surface});
+  color: var(--module-text, ${props => props.theme.text});
 `;
 
 const Header = styled.div`

@@ -6,7 +6,8 @@ const SidebarContainer = styled.div`
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: ${props => props.theme.surface};
+  background-color: var(--module-bg, ${props => props.theme.surface});
+  color: var(--module-text, ${props => props.theme.text});
 `;
 
 const NavSection = styled.div`
@@ -95,6 +96,28 @@ const PlaylistItem = styled.div<{ isActive?: boolean }>`
   }
 `;
 
+const PlaylistActions = styled.div`
+  display: flex;
+  gap: 6px;
+`;
+
+const ActionButton = styled.button`
+  background: none;
+  border: none;
+  color: ${props => props.theme.textSecondary};
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover {
+    color: ${props => props.theme.text};
+    background-color: ${props => props.theme.surfaceHover};
+  }
+`;
+
 export interface Collection {
   id: string;
   name: string;
@@ -118,6 +141,20 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDeleteCollection,
   onRenameCollection
 }) => {
+  const handleRename = (collection: Collection) => {
+    const nextName = prompt('Rename playlist', collection.name);
+    if (nextName) {
+      const trimmed = nextName.trim();
+      if (trimmed) onRenameCollection(collection.id, trimmed);
+    }
+  };
+
+  const handleDelete = (collection: Collection) => {
+    if (confirm(`Delete playlist "${collection.name}"?`)) {
+      onDeleteCollection(collection.id);
+    }
+  };
+
   return (
     <SidebarContainer>
       <NavSection>
@@ -152,9 +189,24 @@ const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => onCollectionSelect(collection.id)}
           >
             <span>{collection.name}</span>
-            <div className="actions">
-              <MoreVertical size={14} />
-            </div>
+            <PlaylistActions className="actions">
+              <ActionButton
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleRename(collection);
+                }}
+              >
+                <Edit2 size={14} />
+              </ActionButton>
+              <ActionButton
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleDelete(collection);
+                }}
+              >
+                <Trash2 size={14} />
+              </ActionButton>
+            </PlaylistActions>
           </PlaylistItem>
         ))}
       </PlaylistSection>

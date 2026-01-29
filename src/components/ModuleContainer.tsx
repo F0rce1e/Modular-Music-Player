@@ -3,8 +3,8 @@ import styled from 'styled-components';
 import { Settings, X, GripHorizontal } from 'lucide-react';
 
 const Container = styled.div<{ isEditing: boolean }>`
-  background: ${props => props.theme.surface};
-  border-radius: 12px;
+  background: var(--module-bg, ${props => props.theme.surface});
+  border-radius: var(--module-radius, 12px);
   box-shadow: ${props => props.theme.shadow};
   display: flex;
   flex-direction: column;
@@ -13,6 +13,10 @@ const Container = styled.div<{ isEditing: boolean }>`
   border: 1px solid ${props => props.isEditing ? props.theme.accent : 'transparent'};
   transition: border 0.2s ease;
   position: relative;
+  opacity: var(--module-opacity, 1);
+  color: var(--module-text, ${props => props.theme.text});
+  font-size: var(--module-font-size, inherit);
+  font-family: var(--module-font-family, inherit);
 `;
 
 const ModuleHeader = styled.div<{ isEditing: boolean }>`
@@ -60,8 +64,16 @@ interface ModuleContainerProps {
   isEditing: boolean;
   onClose?: () => void;
   onSettings?: () => void;
-  className?: string; // For react-grid-layout
-  style?: React.CSSProperties; // For react-grid-layout
+  className?: string;
+  style?: React.CSSProperties;
+  styleConfig?: {
+    background?: string;
+    textColor?: string;
+    borderRadius?: number;
+    opacity?: number;
+    fontSize?: number;
+    fontFamily?: string;
+  };
 }
 
 const ModuleContainer: React.FC<ModuleContainerProps> = ({
@@ -71,10 +83,21 @@ const ModuleContainer: React.FC<ModuleContainerProps> = ({
   onClose,
   onSettings,
   className,
-  style
+  style,
+  styleConfig
 }) => {
+  const mergedStyle: React.CSSProperties = {
+    ...style,
+    ...(styleConfig?.background ? { ['--module-bg' as string]: styleConfig.background } : {}),
+    ...(styleConfig?.textColor ? { ['--module-text' as string]: styleConfig.textColor } : {}),
+    ...(styleConfig?.borderRadius !== undefined ? { ['--module-radius' as string]: `${styleConfig.borderRadius}px` } : {}),
+    ...(styleConfig?.opacity !== undefined ? { ['--module-opacity' as string]: String(styleConfig.opacity) } : {}),
+    ...(styleConfig?.fontSize !== undefined ? { ['--module-font-size' as string]: `${styleConfig.fontSize}px` } : {}),
+    ...(styleConfig?.fontFamily ? { ['--module-font-family' as string]: styleConfig.fontFamily } : {})
+  };
+
   return (
-    <Container isEditing={isEditing} className={className} style={style}>
+    <Container isEditing={isEditing} className={className} style={mergedStyle}>
       {isEditing && (
         <ModuleHeader isEditing={isEditing} className="drag-handle">
           <div className="title">
