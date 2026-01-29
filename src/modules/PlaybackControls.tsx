@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import styled from 'styled-components';
 import { audioService, Track } from '../services/AudioService';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Repeat, Shuffle } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward } from 'lucide-react';
 
 const ControlsContainer = styled.div`
   display: flex;
@@ -51,11 +51,11 @@ const ProgressBarContainer = styled.div`
   gap: 12px;
 `;
 
-const ProgressBar = styled.input`
+const ProgressBar = styled.input<{ progressPercent: number }>`
   flex: 1;
   height: 4px;
   -webkit-appearance: none;
-  background: ${props => props.theme.border};
+  background: ${props => `linear-gradient(90deg, ${props.theme.accent} ${props.progressPercent}%, ${props.theme.border} ${props.progressPercent}%)`};
   border-radius: 2px;
   outline: none;
   cursor: pointer;
@@ -92,36 +92,62 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({ currentTrack, onNex
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [dragValue, setDragValue] = useState(0);
+  const wasPlayingRef = useRef(false);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (audioService.isPlaying()) {
-        setProgress(audioService.getSeek());
-        setDuration(audioService.getDuration());
-      }
+      if (isSeeking) return;
+      const nextDuration = audioService.getDuration();
+      const nextProgress = audioService.getSeek();
+      if (nextDuration >= 0) setDuration(nextDuration);
+      if (nextProgress >= 0) setProgress(nextProgress);
+      setIsPlaying(audioService.isPlaying());
     }, 500);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [isSeeking]);
 
   useEffect(() => {
     setIsPlaying(audioService.isPlaying());
+    setProgress(0);
+    setDuration(audioService.getDuration());
   }, [currentTrack]);
 
   const handleTogglePlay = () => {
+    if (!currentTrack) return;
     if (audioService.isPlaying()) {
       audioService.pause();
       setIsPlaying(false);
-    } else if (currentTrack) {
-      audioService.play(currentTrack);
-      setIsPlaying(true);
+      return;
     }
+    audioService.play(currentTrack);
+    setIsPlaying(true);
   };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
-    audioService.seek(val);
-    setProgress(val);
+    setDragValue(val);
+  };
+
+  const handleSeekStart = () => {
+    setIsSeeking(true);
+    setDragValue(progress);
+    wasPlayingRef.current = audioService.isPlaying();
+    audioService.pause();
+  };
+
+  const handleSeekCommit = () => {
+    audioService.seek(dragValue);
+    setProgress(dragValue);
+    setIsSeeking(false);
+    if (wasPlayingRef.current) {
+      if (currentTrack) {
+        audioService.play(currentTrack);
+        setIsPlaying(true);
+      }
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -131,10 +157,19 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({ currentTrack, onNex
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const displayProgress = useMemo(() => (isSeeking ? dragValue : progress), [isSeeking, dragValue, progress]);
+  const progressPercent = useMemo(() => {
+    if (!duration || duration <= 0) return 0;
+    return Math.min(100, Math.max(0, (displayProgress / duration) * 100));
+  }, [displayProgress, duration]);
+
+  const canPrev = Boolean(currentTrack) && Boolean(onPrev);
+  const canNext = Boolean(currentTrack) && Boolean(onNext);
+
   return (
     <ControlsContainer>
       <MainControls>
-        <ControlButton onClick={onPrev} disabled={!currentTrack}>
+        <ControlButton onClick={onPrev} disabled={!canPrev}>
           <SkipBack size={20} fill="currentColor" />
         </ControlButton>
         
@@ -142,20 +177,25 @@ const PlaybackControls: React.FC<PlaybackControlsProps> = ({ currentTrack, onNex
           {isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" style={{ marginLeft: '2px' }} />}
         </ControlButton>
 
-        <ControlButton onClick={onNext} disabled={!currentTrack}>
+        <ControlButton onClick={onNext} disabled={!canNext}>
           <SkipForward size={20} fill="currentColor" />
         </ControlButton>
       </MainControls>
 
       <ProgressBarContainer>
-        <TimeLabel>{formatTime(progress)}</TimeLabel>
+        <TimeLabel>{formatTime(displayProgress)}</TimeLabel>
         <ProgressBar 
           type="range" 
           min="0" 
-          max={duration || 100} 
-          value={progress} 
-          onChange={handleSeek}
+          max={duration || 0} 
+          value={displayProgress} 
+          onChange={handleSeekChange}
+          onMouseDown={handleSeekStart}
+          onTouchStart={handleSeekStart}
+          onMouseUp={handleSeekCommit}
+          onTouchEnd={handleSeekCommit}
           disabled={!currentTrack}
+          progressPercent={progressPercent}
         />
         <TimeLabel>{formatTime(duration)}</TimeLabel>
       </ProgressBarContainer>

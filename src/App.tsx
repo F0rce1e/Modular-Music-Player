@@ -863,6 +863,17 @@ const App: React.FC = () => {
     handleTrackSelect(tracks[prevIndex]);
   };
 
+  useEffect(() => {
+    audioService.setOnEnd(() => {
+      const cur = audioService.getCurrentTrack();
+      if (!cur || tracks.length === 0) return;
+      const idx = tracks.findIndex(t => t.id === cur.id);
+      const nextIdx = (idx + 1) % tracks.length;
+      handleTrackSelect(tracks[nextIdx]);
+    });
+    return () => audioService.setOnEnd(undefined);
+  }, [tracks]);
+
   const handleToggleFavorite = () => {
     if (!currentTrack) return;
     setFavoriteTrackIds(prev => (

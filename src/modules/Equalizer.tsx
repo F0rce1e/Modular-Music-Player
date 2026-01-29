@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { SlidersHorizontal } from 'lucide-react';
+import { audioService } from '../services/AudioService';
 
 const Container = styled.div`
   display: flex;
@@ -21,24 +22,28 @@ const Header = styled.div`
   border-bottom: 1px solid ${props => props.theme.border};
 `;
 
-const Sliders = styled.div`
+const Sliders = styled.div<{ $layout: 'wide' | 'compact' | 'narrow' }>`
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: ${props => props.$layout === 'wide' ? 'repeat(5, 1fr)' : props.$layout === 'compact' ? 'repeat(2, 1fr)' : '1fr'};
   gap: 12px;
   padding: 16px;
 `;
 
-const Band = styled.div`
+const Band = styled.div<{ $vertical: boolean }>`
   display: flex;
-  flex-direction: column;
+  flex-direction: ${props => props.$vertical ? 'row' : 'column'};
   align-items: center;
+  justify-content: center;
   gap: 8px;
   color: ${props => props.theme.textSecondary};
 `;
 
-const Slider = styled.input`
-  width: 100%;
+const Slider = styled.input<{ $vertical: boolean }>`
+  width: ${props => props.$vertical ? '12px' : '100%'};
+  height: ${props => props.$vertical ? '120px' : 'auto'};
+  -webkit-appearance: ${props => props.$vertical ? 'slider-vertical' : 'none'};
+  writing-mode: ${props => props.$vertical ? 'bt-lr' : 'initial'};
   accent-color: ${props => props.theme.accent};
 `;
 
@@ -49,27 +54,56 @@ const Label = styled.div`
 const bands = ['60Hz', '230Hz', '910Hz', '3.6kHz', '14kHz'];
 
 const Equalizer: React.FC = () => {
-  const [values, setValues] = React.useState<number[]>([0, 0, 0, 0, 0]);
+  const [values, setValues] = useState<number[]>(() => audioService.getEqualizerValues());
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<'wide' | 'compact' | 'narrow'>('wide');
+
+  useEffect(() => {
+    audioService.setEqualizer(values);
+  }, [values]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = (width: number) => {
+      if (width <= 320) {
+        setLayout('narrow');
+      } else if (width <= 520) {
+        setLayout('compact');
+      } else {
+        setLayout('wide');
+      }
+    };
+    update(el.clientWidth);
+    const observer = new ResizeObserver(entries => {
+      const entry = entries[0];
+      if (entry) update(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const handleChange = (index: number, value: number) => {
     setValues(prev => prev.map((v, i) => (i === index ? value : v)));
   };
 
   return (
-    <Container>
+    <Container ref={containerRef}>
       <Header>
         <SlidersHorizontal size={14} />
         Equalizer
       </Header>
-      <Sliders>
+      <Sliders $layout={layout}>
         {bands.map((label, index) => (
-          <Band key={label}>
+          <Band key={label} $vertical={layout !== 'wide'}>
             <Slider
               type="range"
               min={-12}
               max={12}
+              step={0.5}
               value={values[index]}
               onChange={(e) => handleChange(index, Number(e.target.value))}
+              $vertical={layout !== 'wide'}
             />
             <Label>{label}</Label>
           </Band>
